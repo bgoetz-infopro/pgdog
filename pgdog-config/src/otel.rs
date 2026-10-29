@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 /// to the configured URL.
 ///
 /// <https://docs.pgdog.dev/configuration/pgdog.toml/otel/>
-#[derive(JsonSchema, Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
+#[derive(JsonSchema, Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Otel {
     /// Full URL of the OTLP metrics ingest endpoint
@@ -63,6 +63,20 @@ pub struct Otel {
     pub push_interval: u64,
 }
 
+// Not derived: `Config.otel` is `#[serde(default)]`, so without an `[otel]` table this
+// is what runs, and the per-field defaults (which read the env) must still apply.
+impl Default for Otel {
+    fn default() -> Self {
+        Self {
+            endpoint: Self::endpoint(),
+            namespace: Self::namespace(),
+            headers: Self::headers(),
+            datadog_api_key: Self::datadog_api_key(),
+            push_interval: Self::push_interval(),
+        }
+    }
+}
+
 impl Otel {
     fn env_option_string(env_var: &str) -> Option<String> {
         env::var(env_var).ok().filter(|s| !s.is_empty())
@@ -104,7 +118,7 @@ impl Otel {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::test_utils::set_env_var;
+    use crate::test_utils::{remove_env_var, set_env_var};
 
     #[test]
     fn headers_from_toml() {
@@ -160,6 +174,30 @@ mod test {
             config.otel.headers.get("Authorization").unwrap(),
             "Bearer token"
         );
+    }
+
+    #[test]
+    fn env_without_otel_section() {
+        let _endpoint = set_env_var(
+            "OTEL_EXPORTER_OTLP_ENDPOINT",
+            "https://env.example/v1/metrics",
+        );
+        let _interval = set_env_var("OTEL_METRIC_EXPORT_INTERVAL", "30000");
+
+        let config: crate::Config = toml::from_str("").expect("parse");
+        assert_eq!(
+            config.otel.endpoint.as_deref(),
+            Some("https://env.example/v1/metrics")
+        );
+        assert_eq!(config.otel.push_interval, 30_000);
+    }
+
+    #[test]
+    fn default_push_interval_without_otel_section() {
+        let _guard = remove_env_var("OTEL_METRIC_EXPORT_INTERVAL");
+
+        let config: crate::Config = toml::from_str("").expect("parse");
+        assert_eq!(config.otel.push_interval, 10_000);
     }
 
     #[test]
